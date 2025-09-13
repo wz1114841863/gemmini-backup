@@ -1,5 +1,10 @@
 ### Project Specific stuff
 test_run_dir/*
+
+# Ignore files and folders
+.vscode/*
+.metals/*
+
 ### XilinxISE template
 # intermediate build files
 *.bgn
@@ -342,4 +347,3 @@ hs_err_pid*
 configs/
 generated-src/
 waveforms/
-
