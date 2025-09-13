@@ -1,98 +1,41 @@
-<p align="center">
-  <img width="1000" src="./img/full-logo.svg">
-</p>
-
 Gemmini
 ====================================
 
-The Gemmini project is developing a full-system, full-stack DNN hardware exploration and evaluation platform.
-Gemmini enables architects to make useful insights into how different components of the system and software stack (outside of just the accelerator itself) interact to affect overall DNN performance.
+[源项目地址](https://github.com/ucb-bar/gemmini/tree/master)
 
-Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem, and was developed using the [Chisel](https://www.chisel-lang.org/) hardware description language.
+Gemmini是一套全系统、全栈的深度神经网络硬件探索与评估平台。该平台使架构师能够研究系统中不同组件及软件栈（不仅限于加速器本身）如何相互作用，从而影响整体深度神经网络性能。
+![整体架构](./img/gemmini-system.png)
 
-This document is intended to provide information for beginners wanting to try out Gemmini, as well as more advanced in-depth information for those who might want to start hacking on Gemmini's source code.
-
-![Gemmini's high-level architecture](./img/gemmini-system.png)
 
 Quick Start
 ==========
 
-We provide here a quick guide to installing Gemmini's dependencies (Chipyard and Spike), building Gemmini hardware and software, and then running that software on our hardware simulators.
-
-Dependencies
----------
-
-Before beginning, install the [Chipyard dependencies](https://chipyard.readthedocs.io/en/latest/Chipyard-Basics/Initial-Repo-Setup.html#default-requirements-installation).
-
-Installing Chipyard and Spike
------------------------------
-
-Run these steps to install Chipyard and Spike (make sure to checkout the correct Chipyard and Spike commits as shown below):
-
 ```shell
+# 环境搭建
+# 前提: chipyard
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-./build-setup.sh
+git checkout HEAD
+./build-setup.sh riscv-tools
 
+# 第8, 9步失败, 不影响仿真
+# 激活conda环境, 包含需要的所有库和工具
 source env.sh
 
+# 简单的调用流程
+# 第一步: 编译并安装libgemmini.so, 实现将C调用转为自定义指令
 cd generators/gemmini
 make -C software/libgemmini install
-```
 
-
-Building Gemmini Software
--------------------------
-
-Run the steps below to compile Gemmini programs, including large DNN models like ResNet50, and small matrix-multiplication tests.
-
-```shell
+# 第二步: 编译得到可执行测试文件
 cd chipyard/generators/gemmini/software/gemmini-rocc-tests
 ./build.sh
-```
 
-Afterwards, you'll find RISC-V binaries in `build/`, for "baremetal" environments, Linux environments, and "proxy-kernel" environments.
-
-Linux binaries are meant to be executed on SoCs that run Linux.
-These binaries are dynamically linked, and support all syscalls.
-Typically, our users run them on [FireSim](https://fires.im/) simulators.
-
-Baremetal binaries are meant to be run in an environment without any operating system available.
-They lack support for most syscalls, and do not support virtual memory either.
-Our users typically run them on cycle-accurate simulators like Verilator or VCS.
-
-"Proxy-kernel" binaries are meant to be run on a stripped down version of Linux, called the ["RISC-V Proxy Kernel."](https://github.com/riscv-software-src/riscv-pk)
-These binaries support virtual memory, and are typically run on cycle-accurate simulators like Verilator.
-
-**Warning:** Proxy-kernel binaries have limited heap space, so some Gemmini programs that work correctly in baremetal or Linux environments may fail on the proxy-kernel.
-
-Building Gemmini Hardware and Cycle-Accurate Simulators
------------------------------------------------
-
-Run the instructions below to build a cycle-accurate Gemmini simulator using Verilator.
-
-```shell
+# 第三步: 根据配置文件, 生成设计对应的仿真可执行文件
 cd chipyard/sims/verilator
-make CONFIG=GemminiRocketConfig
-
-# Or, if you want a simulator that can generate waveforms, run this:
 make debug CONFIG=GemminiRocketConfig
-```
 
-After running this, in addition to the cycle-accurate simulator, you will be able to find the Verilog description of your SoC in `generated-src/`.
-
-Using Gemmini Functional Simulators
----------------------------
-
-Spike typically runs _much_ faster than cycle-accurate simulators like Verilator or VCS.
-However, Spike can only verify functional correctness; it cannot give accurate performance metrics or profiling information.
-
-Run Simulators
----------------
-
-Run the instructions below to run the Gemmini RISCV binaries that we built previously, using the simulators that we built above:
-
-```shell
+# 第四步: 使用spike和verilator分别来跑测试文件, 验证硬件实现, 并评估
 cd chipyard/sims/verilator
 
 # Run a large DNN workload in the functional simulator
@@ -105,20 +48,12 @@ spike --extension=gemmini ../../generators/gemmini/software/gemmini-rocc-tests/b
 make CONFIG=GemminiRocketConfig run-binary BINARY=../../generators/gemmini/software/gemmini-rocc-tests/build/bareMetalC/template-baremetal
 ```
 
-Next steps
---------
-
-Check out our [MLSys 2022 tutorial](https://sites.google.com/berkeley.edu/gemmini-tutorial-mlsys-2022) (or our earlier but more out-of-date [IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/)) to learn how to:
-* build different types of diverse accelerators using Gemmini.
-* add custom datatypes to Gemmini.
-* write your own Gemmini programs.
-* profile your workloads using Gemmini's performance counters.
-
-Also, consider learning about [FireSim](fires.im), a platform for FPGA-accelerated cycle-accurate simulation.
-We use FireSim to run end-to-end DNN workloads that would take too long to run on Verilator/VCS.
-FireSim also allows users to check that their Gemmini hardware/software will work when running on a Linux environment.
-
-Or, continue reading the rest of this document for descriptions of Gemmini's architecture, ISA, and configuration parameters.
+``` todo
+# TODO List
+1. [Gemmini Tutorial at MLSys 2022](https://sites.google.com/berkeley.edu/gemmini-tutorial-mlsys-2022)
+2. FireSim
+3. code and hardware architecture
+```
 
 Architecture
 ================
@@ -211,7 +146,7 @@ Each "element" in the acccumulator is of type `accType` (which, in the default c
 
 So, for example, in the default config, which has a 16x16 systolic array, the scratchpad banks have a row-width of `16*bits(inputType)=128` bits, and the accumulatorr banks have a row-width of `16*bits(accType)=512` bits.
 
-Both inputs and outputs to the scratchpad must be of type `inputType`. 
+Both inputs and outputs to the scratchpad must be of type `inputType`.
 
 Both inputs and outputs from the accumulator can be either of type `accType` _or_ `inputType`.
 If `inputType` values are input to the accumulator, they will be cast up to `accType`.
@@ -223,7 +158,7 @@ The scratchpad banks are very simple, comprising little more than an SRAM and a 
 The accumulator banks are a bit more complex: in addition to the underlying SRAM, they also include a set of adders to support in-place accumulations.
 In addition, they have a set of "scalers" (described above), and activation function units.
 The scaling and activation functions are applied when the programmer wishes to transform `accType` values down to `inputType` values while reading data out of the accumulator.
-This is typically done to transform the partial-sum outputs of one layer into the low-bitwidth quantized inputs of the next layer. 
+This is typically done to transform the partial-sum outputs of one layer into the low-bitwidth quantized inputs of the next layer.
 
 ### Systolic Array and Transposer
 
@@ -411,7 +346,7 @@ In addition, the figure below illustrates the special case where the number of c
 * There are actually **three** `mvin` instructions in Gemmini: `mvin`, `mvin2`, and `mvin3`.
 `mvin2` and `mvin3` are completely identical to `mvin`, except that they have their own independent set of configuration registers.
 When calling `config_mvin` (described below), the programmer can choose which `mvin` instruction they want to configure.
-* The reason we have three `mvin` instructions is so that the programmer can overlap loads for A, B, and D matrices (for a `A*B+D` matmul), where A, B, and D may all have different main-memory-strides. 
+* The reason we have three `mvin` instructions is so that the programmer can overlap loads for A, B, and D matrices (for a `A*B+D` matmul), where A, B, and D may all have different main-memory-strides.
 
 ### `mvout` Move Data from Scratchpad to L2/DRAM
 **Format:** `mvout rs1, rs2`
@@ -450,7 +385,7 @@ If the stride is 2, then we feed every other row into the systolic array instead
 This limitation may be lifted in the future.
 
 | Dataflow | Transpose A | Transpose B | Permitted? |
-| :---: | :---: | :---: | :---: | 
+| :---: | :---: | :---: | :---: |
 | OS | No | No | Yes |
 | OS | No | Yes | No |
 | OS | Yes | No | Yes |
@@ -475,7 +410,7 @@ This limitation may be lifted in the future.
 ### `config_mvout` configures the Store pipeline
 **Format:** `config_mvout rs1 rs2`
 - `rs1[1:0]` must be `10`
-- `rs2` = the stride in bytes 
+- `rs2` = the stride in bytes
 - `funct` = 0
 
 During `mvout` operations, Gemmini can also perform max-pooling.
@@ -612,8 +547,8 @@ If Gemmini helps you in your academic research, you are encouraged to cite our p
 ```
 @INPROCEEDINGS{gemmini-dac,
   author={Genc, Hasan and Kim, Seah and Amid, Alon and Haj-Ali, Ameer and Iyer, Vighnesh and Prakash, Pranav and Zhao, Jerry and Grubb, Daniel and Liew, Harrison and Mao, Howard and Ou, Albert and Schmidt, Colin and Steffl, Samuel and Wright, John and Stoica, Ion and Ragan-Kelley, Jonathan and Asanovic, Krste and Nikolic, Borivoje and Shao, Yakun Sophia},
-  booktitle={Proceedings of the 58th Annual Design Automation Conference (DAC)}, 
-  title={Gemmini: Enabling Systematic Deep-Learning Architecture Evaluation via Full-Stack Integration}, 
+  booktitle={Proceedings of the 58th Annual Design Automation Conference (DAC)},
+  title={Gemmini: Enabling Systematic Deep-Learning Architecture Evaluation via Full-Stack Integration},
   year={2021},
   volume={},
   number={},
