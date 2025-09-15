@@ -6,7 +6,7 @@ import chisel3.util._
 import Util._
 
 class Im2ColReadReq[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Bundle {
-    """im2col request interface"""
+    // im2col request interface
 
     val addr = new LocalAddr(config.sp_banks, config.sp_bank_entries, config.acc_banks, config.acc_bank_entries)
     //dimension
@@ -27,7 +27,7 @@ class Im2ColReadReq[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[
 }
 
 class Im2ColReadResp[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Bundle {
-    """im2col response interface"""
+    // im2col response interface
     val a_im2col = Vec(config.meshColumns * config.tileColumns, config.inputType)  // 一行 im2col 数据(已展开成矩阵行)
     val im2col_end = Bool()
     val im2col_turn = UInt(9.W)
@@ -38,7 +38,7 @@ class Im2ColReadResp[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 }
 
 class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Module {
-    """im2col 模块, 用于在卷积计算前将输入特征图按滑动窗口展开成矩阵行"""
+    // im2col 模块, 用于在卷积计算前将输入特征图按滑动窗口展开成矩阵行
     import config._
 
     val block_size = meshRows * tileRows  // 一次处理的并行通道数(通常为 16)
