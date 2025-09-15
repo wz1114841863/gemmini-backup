@@ -4,6 +4,11 @@ test_run_dir/*
 # Ignore files and folders
 .vscode/*
 .metals/*
+project/.bloop/*
+project/target/*
+project/project/*
+project/metals.sbt
+
 
 ### XilinxISE template
 # intermediate build files

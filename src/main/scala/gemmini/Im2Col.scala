@@ -6,59 +6,58 @@ import chisel3.util._
 import Util._
 
 class Im2ColReadReq[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Bundle {
+    """im2col request interface"""
 
-  val addr = new LocalAddr(config.sp_banks, config.sp_bank_entries, config.acc_banks, config.acc_bank_entries)
-  //dimension
-  val ocol = UInt(8.W)
-  val krow = UInt(4.W)
-  val icol = UInt(9.W)
-  val irow = UInt(9.W)
-  val stride = UInt(3.W)
-  val channel = UInt(9.W)
-  val row_turn = UInt(11.W)
-  val kdim2 = UInt(8.W)
-  val row_left = UInt(4.W)
+    val addr = new LocalAddr(config.sp_banks, config.sp_bank_entries, config.acc_banks, config.acc_bank_entries)
+    //dimension
+    val ocol = UInt(8.W)
+    val krow = UInt(4.W)
+    val icol = UInt(9.W)
+    val irow = UInt(9.W)
+    val stride = UInt(3.W)
+    val channel = UInt(9.W)
+    val row_turn = UInt(11.W)
+    val kdim2 = UInt(8.W)
+    val row_left = UInt(4.W)
 
-  val im2col_cmd = Bool()
-  val weight_double_bank = Bool()
-  val weight_triple_bank = Bool()
-  val start_inputting = Bool() //start_inputting_a
-
-
+    val im2col_cmd = Bool()
+    val weight_double_bank = Bool()
+    val weight_triple_bank = Bool()
+    val start_inputting = Bool() //start_inputting_a
 }
 
 class Im2ColReadResp[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Bundle {
+    """im2col response interface"""
+    val a_im2col = Vec(config.meshColumns * config.tileColumns, config.inputType)  // 一行 im2col 数据(已展开成矩阵行)
+    val im2col_end = Bool()
+    val im2col_turn = UInt(9.W)
+    val row_turn = UInt(7.W)
 
-  val a_im2col = Vec(config.meshColumns * config.tileColumns, config.inputType)
-  val im2col_end = Bool()
-  val im2col_turn = UInt(9.W)
-  val row_turn = UInt(7.W)
-
-  //added for sync
-  val im2col_delay = Bool()
-
-
+    //added for sync
+    val im2col_delay = Bool()
 }
 
 class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Module {
-  import config._
+    """im2col 模块, 用于在卷积计算前将输入特征图按滑动窗口展开成矩阵行"""
+    import config._
 
-  val block_size = meshRows*tileRows
+    val block_size = meshRows * tileRows  // 一次处理的并行通道数(通常为 16)
 
-  val io = IO(new Bundle {
-    val req = Flipped(Decoupled(new Im2ColReadReq(config))) // from ExecuteController
-    val resp = Decoupled(new Im2ColReadResp(config)) // to ExecuteController
+    val io = IO(new Bundle {
+        val req = Flipped(Decoupled(new Im2ColReadReq(config))) // Input, from ExecuteController
+        val resp = Decoupled(new Im2ColReadResp(config)) // Output, to ExecuteController
 
-    val sram_reads = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)) // from Scratchpad
+        val sram_reads = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)) // from Scratchpad
 
-    val counter = new CounterEventIO()
-  })
-  val req = Reg(new Im2ColReadReq(config))
+        val counter = new CounterEventIO()
+    })
 
-  when(io.req.ready){
-    io.sram_reads(req.addr.sp_bank()).req.valid := true.B
-    io.sram_reads(req.addr.sp_bank()).req.bits.addr := req.addr.sp_row()
-  }
+    val req = Reg(new Im2ColReadReq(config))
+
+    when(io.req.ready){
+        io.sram_reads(req.addr.sp_bank()).req.valid := true.B
+        io.sram_reads(req.addr.sp_bank()).req.bits.addr := req.addr.sp_row()
+    }
 
   val start_inputting_A = req.start_inputting
 
