@@ -3,35 +3,43 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
+class PEControl[T <: Data: Arithmetic](accType: T) extends Bundle {
     val dataflow = UInt(1.W) // TODO make this an Enum, 0:输出固定, 1:权重固定
     val propagate = UInt(1.W) // Which register should be propagated (and which should be accumulated)?
-                              // 本轮是"把累加器结果往下传"还是"继续累加"
+    // 本轮是"把累加器结果往下传"还是"继续累加"
     val shift = UInt(log2Up(accType.getWidth).W) // TODO this isn't correct for Floats
 }
 
-class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T) (implicit ev: Arithmetic[T]) extends Module {
+class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T)(implicit ev: Arithmetic[T]) extends Module {
     // TODO: 还是不太理解这里的implicit ev: Arithmetic[T]是啥意思
     // 似乎是说, 只要T是Data的子类, 并且有Arithmetic这个类型类的实例, 那么就可以用ev来调用Arithmetic[T]的方法
     // 单独包一层 module 的目的是 防止综合工具把多个数据流的 MAC 重复例化,强制复用同一份硬件.
     import ev._
     val io = IO(new Bundle {
-        val in_a  = Input(inputType)
-        val in_b  = Input(weightType)
-        val in_c  = Input(cType)
+        val in_a = Input(inputType)
+        val in_b = Input(weightType)
+        val in_c = Input(cType)
         val out_d = Output(dType)
     })
 
+    // io.out_d := io.in_a * io.in_b + io.in_c
     io.out_d := io.in_c.mac(io.in_a, io.in_b)
 }
 
 // TODO update documentation
-/**
-  * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
-  * @param width Data width of operands
+/** A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
+  * @param width
+  *   Data width of operands
   */
-class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int)
-                   (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
+class PE[T <: Data](
+    inputType: T,
+    weightType: T,
+    outputType: T,
+    accType: T,
+    df: Dataflow.Value,
+    max_simultaneous_matmuls: Int
+)(implicit ev: Arithmetic[T])
+    extends Module { // Debugging variables
     import ev._
 
     val io = IO(new Bundle {
@@ -42,19 +50,19 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
         val out_b = Output(outputType)
         val out_c = Output(outputType)
 
-        val in_control = Input(new PEControl(accType))  // 把控制信号也传递下去
+        val in_control = Input(new PEControl(accType)) // 把控制信号也传递下去
         val out_control = Output(new PEControl(accType))
 
-        val in_id = Input(UInt(log2Up(max_simultaneous_matmuls).W))  // 用于区分不同的 matmul
+        val in_id = Input(UInt(log2Up(max_simultaneous_matmuls).W)) // 用于区分不同的 matmul
         val out_id = Output(UInt(log2Up(max_simultaneous_matmuls).W))
 
-        val in_last = Input(Bool())  // 标记当前输入是否是最后一个
+        val in_last = Input(Bool()) // 标记当前输入是否是最后一个
         val out_last = Output(Bool())
 
-        val in_valid = Input(Bool())  // 标记当前输入是否有效
+        val in_valid = Input(Bool()) // 标记当前输入是否有效
         val out_valid = Output(Bool())
 
-        val bad_dataflow = Output(Bool())  // 用于标记是否遇到了不支持的数据流模式
+        val bad_dataflow = Output(Bool()) // 用于标记是否遇到了不支持的数据流模式
     })
 
     val cType = if (df == Dataflow.WS) inputType else accType
@@ -63,16 +71,17 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
     // elaboration/synthesis tools often fail to consolidate and de-duplicate
     // MAC units. To force mac circuitry to be re-used, we create a "mac_unit"
     // module here which just performs a single MAC operation
-    val mac_unit = Module(new MacUnit(inputType, weightType,
-        if (df == Dataflow.WS) outputType else accType, outputType))
+    val mac_unit = Module(
+        new MacUnit(inputType, weightType, if (df == Dataflow.WS) outputType else accType, outputType)
+    )
 
-    val a  = io.in_a
-    val b  = io.in_b
-    val d  = io.in_d
-    val c1 = Reg(cType)  // 只有两个寄存器 + 1个MAC
-    val c2 = Reg(cType)
+    val a = io.in_a
+    val b = io.in_b
+    val d = io.in_d
+    val c1 = Reg(cType) // 只有两个寄存器 + 1个MAC
+    val c2 = Reg(cType) // 每周期都会更新的累加寄存器
     val dataflow = io.in_control.dataflow
-    val prop  = io.in_control.propagate
+    val prop = io.in_control.propagate
     val shift = io.in_control.shift
     val id = io.in_id
     val last = io.in_last
@@ -88,9 +97,9 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
 
     mac_unit.io.in_a := a
 
-    val last_s = RegEnable(prop, valid)
+    val last_s = RegEnable(prop, valid) // valid为高时才采样
     val flip = last_s =/= prop
-    val shift_offset = Mux(flip, shift, 0.U)
+    val shift_offset = Mux(flip, shift, 0.U) // 移位控制
 
     // Which dataflow are we using?
     val OUTPUT_STATIONARY = Dataflow.OS.id.U(1.W)
@@ -101,30 +110,31 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
     val PROPAGATE = 1.U(1.W)
 
     io.bad_dataflow := false.B
-    when ((df == Dataflow.OS).B || ((df == Dataflow.BOTH).B && dataflow === OUTPUT_STATIONARY)) {
+    when((df == Dataflow.OS).B || ((df == Dataflow.BOTH).B && dataflow === OUTPUT_STATIONARY)) {
         // 输出固定: a从左向右流动, 权重b从上向下流动, 部分和留在本地reg
         when(prop === PROPAGATE) {
-            io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
+            // 下传时, c1右移后输出, c2更新为新的部分和
+            io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType) // 每次移位不一样
             io.out_b := b
             mac_unit.io.in_b := b.asTypeOf(weightType)
             mac_unit.io.in_c := c2
             c2 := mac_unit.io.out_d
-            c1 := d.withWidthOf(cType)
+            c1 := d.withWidthOf(cType) // 每次翻边进行更新
         }.otherwise {
             io.out_c := (c2 >> shift_offset).clippedToWidthOf(outputType)
             io.out_b := b
-            mac_unit.io.in_b := b.asTypeOf(weightType)
-            mac_unit.io.in_c := c1
-            c1 := mac_unit.io.out_d
+            mac_unit.io.in_b := b.asTypeOf(weightType) // 权重
+            mac_unit.io.in_c := c1 // 旧部分和
+            c1 := mac_unit.io.out_d // 更新部分和
             c2 := d.withWidthOf(cType)
         }
-    }.elsewhen ((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && dataflow === WEIGHT_STATIONARY)) {
+    }.elsewhen((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && dataflow === WEIGHT_STATIONARY)) {
         // 权重固定: 权重常驻c1/c2, a从上向下流动, 部分和b从左向右流动
         when(prop === PROPAGATE) {
             io.out_c := c1
             mac_unit.io.in_b := c2.asTypeOf(weightType)
-            mac_unit.io.in_c := b
-            io.out_b := mac_unit.io.out_d
+            mac_unit.io.in_c := b // 横向流进来的部分和
+            io.out_b := mac_unit.io.out_d // 输出新的部分和
             c1 := d
         }.otherwise {
             io.out_c := c2
@@ -135,14 +145,14 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
         }
     }.otherwise {
         io.bad_dataflow := true.B
-        //assert(false.B, "unknown dataflow")
+        // assert(false.B, "unknown dataflow")
         io.out_c := DontCare
         io.out_b := DontCare
         mac_unit.io.in_b := b.asTypeOf(weightType)
         mac_unit.io.in_c := c2
     }
 
-    when (!valid) {
+    when(!valid) {
         c1 := c1
         c2 := c2
         mac_unit.io.in_b := DontCare
