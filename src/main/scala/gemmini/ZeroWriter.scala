@@ -21,7 +21,7 @@ class ZeroWriterResp[Tag <: Data](laddr_t: LocalAddr, block_cols: Int, tag_t: Ta
 
 /*
     ZeroWriter的作用是 将一块内存区域清零, 通常用于初始化输出缓冲区或中间结果缓冲区.
-        接收一个请求清零(一片连续地址)的信号,这个模块会计算并并转发(但是不实际进行操作)对应bank的清零指令
+        接收一个请求清零(一片连续地址)的信号,这个模块会计算并转发(但是不实际进行操作)对应bank的清零指令
  */
 class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiArrayConfig[T, U, V], tag_t: Tag)
     extends Module {
