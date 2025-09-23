@@ -15,28 +15,26 @@ class VectorScalarMultiplierReq[T <: Data, U <: Data, Tag <: Data](block_cols: I
     val scale: U = u.cloneType // 标量系数
     val repeats: UInt = UInt(16.W) // 同一向量要重复乘多少次, TODO magic number
     val pixel_repeats: UInt = UInt(8.W) // TODO magic number
-    val last: Bool = Bool() // 当前请求是 tile 最后一个 block
+    val last: Bool = Bool() // 当前请求是最后一个
     val tag: Tag = tag_t.cloneType
-
 }
 
 class VectorScalarMultiplierResp[T <: Data, Tag <: Data](block_cols: Int, t: T, tag_t: Tag) extends Bundle {
     val out: Vec[T] = Vec(block_cols, t.cloneType) // 乘完后的向量
-    val row: UInt = UInt(16.W) // 当前向量在tile中的行号, TODO magic number
+    val row: UInt = UInt(16.W) // TODO magic number
     val last: Bool = Bool()
     val tag: Tag = tag_t.cloneType
-
 }
 
 class DataWithIndex[T <: Data, U <: Data](t: T, u: U) extends Bundle {
-    // 把"一个元素"封装成"带索引的token",方便在多通道scale单元间做仲裁
     val data = t.cloneType
     val scale = u.cloneType
-    val id = UInt(2.W) // TODO hardcoded
-    val index = UInt()
+    val id = UInt(2.W) // 属于哪一条nEntries, TODO hardcoded
+    val index = UInt() // 属于向量中第几个元素
 }
 
 class ScalePipe[T <: Data, U <: Data](t: T, mvin_scale_args: ScaleArguments[T, U]) extends Module {
+    // 乘法 + 固定延迟移位链, latency 由 mvin_scale_args.latency 给出.
     val u = mvin_scale_args.multiplicand_t
     val io = IO(new Bundle {
         val in = Input(Valid(new DataWithIndex(t, u)))
@@ -91,6 +89,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
 
     if (num_scale_units == -1) {
         // 旁路路径: 没有scale单元, 直接输出输入
+        // 直接使用mvin_scale_args的scale_func对输入进行缩放
         val pipe = Module(
             new Pipeline[VectorScalarMultiplierResp[T, Tag]](
                 new VectorScalarMultiplierResp(block_cols, t, tag_t),
@@ -110,15 +109,17 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
             case None => in.bits.in
         })
     } else {
-        val nEntries = 3
-        val regs = Reg(Vec(nEntries, Valid(new VectorScalarMultiplierReq(block_cols, t, u, tag_t))))
-        val out_regs = Reg(Vec(nEntries, new VectorScalarMultiplierResp(block_cols, t, tag_t)))
+        val nEntries = 3  // 乒乓缓冲, 最多同时处理3个请求
+        val regs = Reg(Vec(nEntries, Valid(new VectorScalarMultiplierReq(block_cols, t, u, tag_t))))  // 保存输入向量
+        val out_regs = Reg(Vec(nEntries, new VectorScalarMultiplierResp(block_cols, t, tag_t)))  // 保存输出向量
 
+        // 记录每个元素是否已经送入scale单元
         val fired_masks = Reg(Vec(nEntries, Vec(width, Bool())))
         val completed_masks = Reg(Vec(nEntries, Vec(width, Bool())))
         val head_oh = RegInit(1.U(nEntries.W)) // 指向下一个要毕业的slot
         val tail_oh = RegInit(1.U(nEntries.W)) // 指向下一个要填充的slot
 
+        // 如果head指向的条目已完成, 就把io.resp.valid 拉高
         io.resp.valid := Mux1H(
             head_oh.asBools,
             (regs zip completed_masks).map({ case (r, c) => r.valid && c.reduce(_ && _) })
@@ -127,12 +128,14 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
         when(io.resp.fire) {
             for (i <- 0 until nEntries) {
                 when(head_oh(i)) {
-                    regs(i).valid := false.B
+                    regs(i).valid := false.B  // 只对 head 指向的那一条目清零
                 }
             }
-            head_oh := (head_oh << 1) | head_oh(nEntries - 1)
+            head_oh := (head_oh << 1) | head_oh(nEntries - 1)  // 循环左移
         }
 
+        // tail_oh指针指向 下一个可写的空条目
+        // 把一条新请求(in)写进nEntries乒乓缓冲
         in_fire := (in.valid &&
             (!Mux1H(tail_oh.asBools, regs.map(_.valid))))
         when(in_fire) {
@@ -150,13 +153,16 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
                         case f: Float => Arithmetic.FloatArithmetic.cast(f).identity
                         case b: Bool  => 1.U(1.W)
                     })
+                    // 如果送来的scale正好等于1,就把该条目的所有 fired/completed 掩码一次性全置 1.
                     fired_masks(i).foreach(_ := in.bits.scale.asUInt === identity.asUInt || always_identity.B)
                     completed_masks(i).foreach(_ := in.bits.scale.asUInt === identity.asUInt || always_identity.B)
                 }
             }
+            // 写完后tail_oh循环左移 1 位,把最高位卷回最低位,形成 FIFO 环形指针.
             tail_oh := (tail_oh << 1) | tail_oh(nEntries - 1)
         }
 
+        // 双重循环把 二维矩阵 (条目, 元素) 拉平成一维
         val inputs = Seq.fill(width * nEntries) { Wire(Decoupled(new DataWithIndex(t, u))) }
         for (i <- 0 until nEntries) {
             for (w <- 0 until width) {
@@ -172,10 +178,13 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
             }
         }
         for (i <- 0 until num_scale_units) {
+            // // 挑出"序号 % num_scale_units == i"的所有元素通道
             val arbIn = inputs.zipWithIndex.filter({ case (_, w) => w % num_scale_units == i }).map(_._1)
+            // 接一个轮询仲裁器
             val arb = Module(new RRArbiter(new DataWithIndex(t, u), arbIn.length))
             arb.io.in <> arbIn
             arb.io.out.ready := true.B
+            // 仲裁器输出先寄存一级,防止组合路径过长
             val arbOut = Reg(Valid(new DataWithIndex(t, u)))
             arbOut.valid := arb.io.out.valid
             arbOut.bits := arb.io.out.bits
@@ -186,6 +195,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
             val pipe = Module(new ScalePipe(t, mvin_scale_args.get))
             pipe.io.in := arbOut
             val pipe_out = pipe.io.out
+            // 把结果写回对应的 out_regs和completed_masks
             for (j <- 0 until nEntries) {
                 for (w <- 0 until width) {
                     if ((j * width + w) % num_scale_units == i) {
